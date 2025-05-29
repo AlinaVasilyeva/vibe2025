@@ -11,66 +11,125 @@ const dbConfig = {
     user: 'root',
     password: '',
     database: 'todolist',
-  };
+};
 
-
-  async function retrieveListItems() {
-    try {
-      // Create a connection to the database
-      const connection = await mysql.createConnection(dbConfig);
-      
-      // Query to select all items from the database
-      const query = 'SELECT id, text FROM items';
-      
-      // Execute the query
-      const [rows] = await connection.execute(query);
-      
-      // Close the connection
-      await connection.end();
-      
-      // Return the retrieved items as a JSON array
-      return rows;
-    } catch (error) {
-      console.error('Error retrieving list items:', error);
-      throw error; // Re-throw the error
-    }
-  }
-
-// Stub function for generating HTML rows
-async function getHtmlRows() {
-    // Example data - replace with actual DB data later
-    /*
-    const todoItems = [
-        { id: 1, text: 'First todo item' },
-        { id: 2, text: 'Second todo item' }
-    ];*/
-
-    const todoItems = await retrieveListItems();
-
-    // Generate HTML for each item
-    return todoItems.map(item => `
-        <tr>
-            <td>${item.id}</td>
-            <td>${item.text}</td>
-            <td><button class="delete-btn">×</button></td>
-        </tr>
-    `).join('');
+// Parse request body
+async function parseRequestBody(req) {
+    return new Promise((resolve, reject) => {
+        let body = '';
+        req.on('data', chunk => body += chunk.toString());
+        req.on('end', () => {
+            try {
+                resolve(JSON.parse(body));
+            } catch {
+                resolve({});
+            }
+        });
+    });
 }
 
-// Modified request handler with template replacement
+// API endpoints
+async function handleApiRequest(req, res) {
+    try {
+        // GET all items
+        if (req.url === '/api/items' && req.method === 'GET') {
+            const connection = await mysql.createConnection(dbConfig);
+            const [rows] = await connection.execute('SELECT id, text FROM items');
+            await connection.end();
+            
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify(rows));
+            return true;
+        }
+        
+        // POST new item
+        if (req.url === '/api/items' && req.method === 'POST') {
+            const body = await parseRequestBody(req);
+            
+            if (!body.text || body.text.trim() === '') {
+                res.writeHead(400, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ error: 'Text is required' }));
+                return true;
+            }
+            
+            const connection = await mysql.createConnection(dbConfig);
+            const [result] = await connection.execute(
+                'INSERT INTO items (text) VALUES (?)',
+                [body.text]
+            );
+            await connection.end();
+            
+            res.writeHead(201, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ 
+                id: result.insertId, 
+                text: body.text 
+            }));
+            return true;
+        }
+        
+        // PUT update item
+        if (req.url.startsWith('/api/items/') && req.method === 'PUT') {
+            const id = req.url.split('/')[3];
+            const body = await parseRequestBody(req);
+            
+            if (!body.text || body.text.trim() === '') {
+                res.writeHead(400, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ error: 'Text is required' }));
+                return true;
+            }
+            
+            const connection = await mysql.createConnection(dbConfig);
+            await connection.execute(
+                'UPDATE items SET text = ? WHERE id = ?',
+                [body.text, id]
+            );
+            await connection.end();
+            
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: true }));
+            return true;
+        }
+        
+        // DELETE item
+        if (req.url.startsWith('/api/items/') && req.method === 'DELETE') {
+            const id = req.url.split('/')[3];
+            const connection = await mysql.createConnection(dbConfig);
+            await connection.execute(
+                'DELETE FROM items WHERE id = ?',
+                [id]
+            );
+            await connection.end();
+            
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: true }));
+            return true;
+        }
+        
+        return false;
+    } catch (err) {
+        console.error('API error:', err);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Internal server error' }));
+        return true;
+    }
+}
+
+// Main request handler
 async function handleRequest(req, res) {
+    // Handle API requests
+    if (await handleApiRequest(req, res)) {
+        return;
+    }
+    
+    // Serve static files
     if (req.url === '/') {
         try {
             const html = await fs.promises.readFile(
                 path.join(__dirname, 'index.html'), 
                 'utf8'
             );
-            
-            // Replace template placeholder with actual content
-            const processedHtml = html.replace('{{rows}}', await getHtmlRows());
-            
             res.writeHead(200, { 'Content-Type': 'text/html' });
-            res.end(processedHtml);
+            res.end(html);
         } catch (err) {
             console.error(err);
             res.writeHead(500, { 'Content-Type': 'text/plain' });
@@ -84,4 +143,4 @@ async function handleRequest(req, res) {
 
 // Create and start server
 const server = http.createServer(handleRequest);
-server.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+server.listen(PORT, () => console.log(`Server running on http://localhost:${PORT}`));
