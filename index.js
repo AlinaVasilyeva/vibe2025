@@ -1,97 +1,94 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>To-Do List</title>
-    <style>
-        /* ... (existing styles unchanged) ... */
-    </style>
-</head>
-<body>
+const http = require('http');
+const fs = require('fs');
+const path = require('path');
+const mysql = require('mysql2/promise');
 
-<h2 style="text-align: center;">To-Do List</h2>
+const PORT = 3000;
 
-<table id="todoList">
-    <thead>
-        <tr>
-            <th>Number</th>
-            <th>Text</th>
-            <th>Action</th>
-        </tr>
-    </thead>
-    <tbody id="listBody">
-        {{rows}}
-    </tbody>
-</table>
+// Database connection settings
+const dbConfig = {
+    host: 'localhost',
+    user: 'root',
+    password: '',
+    database: 'todolist',
+};
 
-<div class="add-form">
-    <input type="text" id="newItem" placeholder="Enter new item">
-    <button onclick="addItem()">Add</button>
-</div>
-
-<script>
-    let items = [];
-
-    document.addEventListener('DOMContentLoaded', function() {
-        const rows = document.querySelectorAll('#listBody tr');
-        rows.forEach(row => {
-            const id = parseInt(row.cells[0].textContent);
-            const text = row.cells[1].textContent;
-            items.push({ id, text });
-        });
-    });
-
-    function renderList() {
-        const listBody = document.getElementById('listBody');
-        listBody.innerHTML = '';
-
-        items.forEach(item => {
-            const row = document.createElement('tr');
-            row.innerHTML = `
-                <td>${item.id}</td>
-                <td>${item.text}</td>
-                <td><button onclick="removeItem(${item.id})">Remove</button></td>
-            `;
-            listBody.appendChild(row);
-        });
+async function retrieveListItems() {
+    try {
+        const connection = await mysql.createConnection(dbConfig);
+        const query = 'SELECT id, text FROM items';
+        const [rows] = await connection.execute(query);
+        await connection.end();
+        return rows;
+    } catch (error) {
+        console.error('Error retrieving list items:', error);
+        throw error;
     }
+}
 
-    function addItem() {
-        const newItemInput = document.getElementById('newItem');
-        const newItemText = newItemInput.value.trim();
+async function getHtmlRows() {
+    const todoItems = await retrieveListItems();
+    return todoItems.map(item => `
+        <tr>
+            <td>${item.id}</td>
+            <td>${item.text}</td>
+            <td><button onclick="removeItem(${item.id})">Remove</button></td>
+        </tr>
+    `).join('');
+}
 
-        if (newItemText) {
-            fetch('/add', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({ text: newItemText })
-            })
-            .then(response => response.json())
-            .then(newItem => {
-                items.push(newItem);
-                newItemInput.value = '';
-                renderList();
-            })
-            .catch(error => console.error('Error:', error));
+async function handleAddRequest(req) {
+    /* ... unchanged from previous branch ... */
+}
+
+// Обработка DELETE запроса для удаления элемента
+async function handleRemoveRequest(id) {
+    try {
+        const connection = await mysql.createConnection(dbConfig);
+        await connection.execute('DELETE FROM items WHERE id = ?', [id]);
+        await connection.end();
+        return true;
+    } catch (error) {
+        console.error('Error removing item:', error);
+        throw error;
+    }
+}
+
+async function handleRequest(req, res) {
+    if (req.url === '/add' && req.method === 'POST') {
+        /* ... unchanged from previous branch ... */
+    } 
+    else if (req.url.startsWith('/remove/') && req.method === 'DELETE') {
+        const id = req.url.split('/')[2];
+        try {
+            await handleRemoveRequest(id);
+            res.writeHead(200);
+            res.end();
+        } catch (err) {
+            console.error(err);
+            res.writeHead(500);
+            res.end('Error removing item');
         }
     }
-
-    function removeItem(id) {
-        fetch(`/remove/${id}`, {
-            method: 'DELETE'
-        })
-        .then(response => {
-            if (response.ok) {
-                items = items.filter(item => item.id !== id);
-                renderList();
-            }
-        })
-        .catch(error => console.error('Error:', error));
+    else if (req.url === '/' && req.method === 'GET') {
+        try {
+            const html = await fs.promises.readFile(
+                path.join(__dirname, 'index.html'), 
+                'utf8'
+            );
+            const processedHtml = html.replace('{{rows}}', await getHtmlRows());
+            res.writeHead(200, { 'Content-Type': 'text/html' });
+            res.end(processedHtml);
+        } catch (err) {
+            console.error(err);
+            res.writeHead(500, { 'Content-Type': 'text/plain' });
+            res.end('Error loading index.html');
+        }
+    } else {
+        res.writeHead(404, { 'Content-Type': 'text/plain' });
+        res.end('Route not found');
     }
-</script>
+}
 
-</body>
-</html>
+const server = http.createServer(handleRequest);
+server.listen(PORT, () => console.log(`Server running on port ${PORT}`));
